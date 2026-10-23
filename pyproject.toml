@@ -1,0 +1,25 @@
+[project]
+name = "sens2bits"
+version = "0.1.0"
+description = "Measure and allocate low-bit quantization sensitivity"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets",
+    "matplotlib",
+    "pandas",
+    "pyyaml",
+    "torch",
+    "transformers",
+]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }

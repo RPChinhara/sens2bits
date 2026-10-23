@@ -1,0 +1,15 @@
+model_id: Qwen/Qwen3.5-4B
+dtype: bfloat16
+device: cuda
+max_len: 2048
+batch_size: 4
+sens_windows: 16
+test_windows: null
+bits_options: [8, 6, 4, 3, 2]
+budgets: [6, 5, 4.5, 4, 3.5, 3]
+unit: part
+random_seeds: [0, 1, 2]
+smoke: false
+smoke_sens_windows: 2
+smoke_test_windows: 4
+smoke_bits_options: [8, 2]
