@@ -255,24 +255,12 @@ def main() -> None:
         above = min(bit for bit in bits_options if bit >= budget)
         above_allocation = uniform_allocation(units, bits_options, above)
         if below == above:
-            LOGGER.info(f"budget={budget:g} method=uniform_above reused uniform_below result")
-            if (budget_key(budget), "uniform_above") in completed:
-                above_result = evaluate_checkpoint(
-                    budget, "uniform_above", above_allocation,
-                    predicted_ppl(baseline_sens, units, costs, above_allocation),
-                )
-            else:
-                above_result = below_result
+            LOGGER.info(f"budget={budget:g} method=uniform_above omitted; identical to uniform_below")
         else:
-            above_result = evaluate_checkpoint(
+            evaluate_checkpoint(
                 budget, "uniform_above", above_allocation,
                 predicted_ppl(baseline_sens, units, costs, above_allocation),
             )
-        if below == above and (budget_key(budget), "uniform_above") not in completed:
-            row = {"budget": budget, "method": "uniform_above", **above_result}
-            append_checkpoint(row)
-            checkpoint = pd.concat([checkpoint, pd.DataFrame([row])], ignore_index=True)
-            completed.add((budget_key(budget), "uniform_above"))
 
         random_results = []
         for seed in config["random_seeds"]:

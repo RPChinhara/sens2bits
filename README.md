@@ -53,8 +53,10 @@ uv run python main.py
 Average bits cover decoder linear weights only; embeddings, `lm_head`, and
 normalization layers are unquantized. Quantization is symmetric absmax
 round-to-nearest, and 2-bit quantization uses 3 levels.
-`uniform_above` can exceed the requested budget. `pred_ppl_sens` assumes
-additive per-unit ΔPPL.
+Average bits exclude per-channel quantization scales. `uniform_above` can
+exceed the requested budget and is omitted when the budget equals a configured
+bit width, since it would be identical to `uniform_below`. `pred_ppl_sens`
+assumes additive per-unit ΔPPL.
 Generated files are organized as follows:
 
 - `results/sens.csv`

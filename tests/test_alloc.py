@@ -231,10 +231,49 @@ def test_alloc_main(tmp_path, monkeypatch):
     alloc.main()
     assert (tmp_path / "results.csv").exists()
     rows = pd.read_csv(tmp_path / "results.csv")
-    assert set(rows["method"]) == {"unquantized", "greedy", "uniform_below", "uniform_above", "random_seed_0"}
+    assert set(rows["method"]) == {"unquantized", "greedy", "uniform_below", "random_seed_0"}
     assert len(calls) == 3
+    assert all(isinstance(call[0][-1], (int, float)) for call in calls)
     alloc.main()
     assert len(calls) == 3
+
+
+def test_alloc_main_backfills_predictions(tmp_path, monkeypatch):
+    monkeypatch.setattr(alloc, "setup_logging", lambda: None)
+    monkeypatch.setattr(alloc, "RESULTS_DIR", tmp_path / "results")
+    monkeypatch.setattr(alloc, "RESULTS_PATH", tmp_path / "results.csv")
+    monkeypatch.setattr(alloc, "SENS_PATH", tmp_path / "sens.csv")
+    monkeypatch.setattr(alloc, "ALLOCATION_DIR", tmp_path / "alloc")
+    (tmp_path / "results").mkdir(parents=True, exist_ok=True)
+    write_sens_csv(tmp_path / "sens.csv")
+    monkeypatch.setattr(alloc, "load_costs", lambda: {"u1": {8: 0.0, 4: 0.2}, "u2": {8: 0.0, 4: 0.3}})
+    cfg = {
+        "dtype": "float32", "device": "cpu", "max_len": 4, "batch_size": 2,
+        "sens_windows": 2, "test_windows": 1, "bits_options": [8, 4],
+        "budgets": [4], "unit": "part", "random_seeds": [0], "smoke": False,
+    }
+    baseline = {"budget": "baseline", "method": "unquantized", "avg_bits": 8, "ppl_sens": 1.0, "ppl_test": 1.1, "pred_ppl_sens": ""}
+    greedy = {"budget": 4, "method": "greedy", "avg_bits": 4, "ppl_sens": 1.5, "ppl_test": 1.6, "pred_ppl_sens": 1.2}
+    uniform = {"budget": 4, "method": "uniform_below", "avg_bits": 4, "ppl_sens": 2.0, "ppl_test": 2.1, "pred_ppl_sens": ""}
+    random_row = {"budget": 4, "method": "random_seed_0", "avg_bits": 4, "ppl_sens": 3.0, "ppl_test": 3.1, "pred_ppl_sens": ""}
+    pd.DataFrame([baseline, greedy, uniform, random_row]).to_csv(tmp_path / "results.csv", index=False)
+    model = types.SimpleNamespace()
+    units = [real_unit("u1"), real_unit("u2")]
+    monkeypatch.setattr(alloc, "load_config", lambda: cfg)
+    monkeypatch.setattr(alloc, "load_model_and_tokenizer", lambda config: (model, object()))
+    monkeypatch.setattr(alloc, "find_targets", lambda m: [])
+    monkeypatch.setattr(alloc, "make_units", lambda t, k: units)
+    monkeypatch.setattr(alloc, "load_windows", lambda tok, c: ([], []))
+    monkeypatch.setattr(alloc, "save_allocation", lambda *a, **k: None)
+    monkeypatch.setattr(alloc, "evaluate_allocation", lambda *a, **k: pytest.fail("unexpected evaluation"))
+    monkeypatch.setattr(alloc, "LOGGER", __import__("logging").getLogger("x"))
+    before = pd.read_csv(tmp_path / "results.csv")
+    alloc.main()
+    after = pd.read_csv(tmp_path / "results.csv")
+    pd.testing.assert_series_equal(after["ppl_sens"], before["ppl_sens"])
+    pd.testing.assert_series_equal(after["ppl_test"], before["ppl_test"])
+    assert after.loc[after["method"] == "uniform_below", "pred_ppl_sens"].notna().all()
+    assert after.loc[after["method"] == "random_seed_0", "pred_ppl_sens"].notna().all()
 
 
 def test_alloc_main_assertion(tmp_path, monkeypatch):
