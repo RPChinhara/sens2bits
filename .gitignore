@@ -2,3 +2,4 @@
 __pycache__/
 .python-version
 quantization_study.log
+uv.lock
