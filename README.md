@@ -24,6 +24,13 @@ All hyperparameters are in `config.yaml`. The current checked-in configuration
 uses smoke mode: 2 sensitivity windows, 4 test windows, and 2 bit options.
 The model and dataset are loaded from the Hugging Face cache/network as needed.
 
+### Start a fresh run:
+
+```bash
+rm -rf results quantization_study.log
+uv run python main.py
+```
+
 ## Measured results
 Average bits exclude per-channel quantization scales.
 Generated files are organized as follows:
@@ -35,3 +42,4 @@ Generated files are organized as follows:
 
 Run logs are appended to the project-root `quantization_study.log` file while also being
 shown in the terminal.
+
