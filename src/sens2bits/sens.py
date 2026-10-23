@@ -4,7 +4,9 @@ import csv
 import logging
 import math
 import re
+import sys
 import time
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +40,9 @@ def setup_logging() -> None:
     """Configure console and append-only file logging for both workflows."""
     LOGGER.setLevel(logging.INFO)
     LOGGER.handlers.clear()
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.WARNING)
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     file_handler = logging.FileHandler(LOG_PATH, mode="a", encoding="utf-8")
     console_handler = logging.StreamHandler()
@@ -46,6 +51,21 @@ def setup_logging() -> None:
     LOGGER.addHandler(file_handler)
     LOGGER.addHandler(console_handler)
     LOGGER.propagate = False
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    logging.captureWarnings(True)
+    warnings_logger = logging.getLogger("py.warnings")
+    warnings_logger.handlers.clear()
+    warnings_logger.propagate = True
+
+    def log_uncaught_exception(exception_type: type[BaseException], value: BaseException, traceback: Any) -> None:
+        if issubclass(exception_type, KeyboardInterrupt):
+            sys.__excepthook__(exception_type, value, traceback)
+            return
+        LOGGER.critical("uncaught exception", exc_info=(exception_type, value, traceback))
+        sys.__excepthook__(exception_type, value, traceback)
+
+    sys.excepthook = log_uncaught_exception
 
 
 @dataclass

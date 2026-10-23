@@ -37,3 +37,8 @@ Generated files are organized as follows:
 - `results/heatmap.png`
 - `results/results.csv`
 - `results/allocation/allocation_greedy_<budget>.json`
+
+Warnings and uncaught errors are written to `quantization_study.log`. Allocation
+results are checkpointed row by row in `results/results.csv`; rerunning the
+allocator skips completed `(budget, method)` evaluations and continues with
+missing rows.
