@@ -22,7 +22,7 @@ from sens import (
 )
 
 
-RESULTS_DIR = Path("results")
+RESULTS_DIR = Path(__file__).resolve().parents[2] / "results"
 ALLOCATION_DIR = RESULTS_DIR / "allocation"
 SENS_PATH = RESULTS_DIR / "sens.csv"
 RESULTS_PATH = RESULTS_DIR / "results.csv"

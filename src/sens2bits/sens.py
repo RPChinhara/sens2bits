@@ -24,9 +24,10 @@ from transformers import (
 )
 
 
-CONFIG_PATH = Path("config.yaml")
-LOG_PATH = Path("log.txt")
-RESULTS_DIR = Path("results")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+LOG_PATH = PROJECT_ROOT / "quantization_study.log"
+RESULTS_DIR = PROJECT_ROOT / "results"
 SENS_PATH = RESULTS_DIR / "sens.csv"
 HEATMAP_PATH = RESULTS_DIR / "heatmap.png"
 CSV_FIELDS = ["unit", "layer", "part", "bits", "params", "ppl", "delta_ppl"]

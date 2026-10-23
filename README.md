@@ -9,8 +9,8 @@ uniform, and random allocations.
 
 ```bash
 uv sync
-uv run python sens.py
-uv run python alloc.py
+uv run python src/sens2bits/sens.py
+uv run python src/sens2bits/alloc.py
 ```
 
 All hyperparameters are in `config.yaml`. The current checked-in configuration
@@ -26,5 +26,5 @@ Generated files are organized as follows:
 - `results/results.csv`
 - `results/allocation/allocation_greedy_<budget>.json`
 
-Run logs are appended to the project-root `log.txt` file while also being
+Run logs are appended to the project-root `quantization_study.log` file while also being
 shown in the terminal.
