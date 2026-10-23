@@ -44,11 +44,13 @@ RESULT_FIELDS = ["budget", "method", "avg_bits", "ppl_sens", "ppl_test", "pred_p
 
 
 def average_bits(units: list[Any], allocation: dict[str, int]) -> float:
+    """Return the parameter-weighted average bit width of an allocation."""
     total_params = sum(unit.params for unit in units)
     return sum(unit.params * allocation[unit.name] for unit in units) / total_params
 
 
 def load_costs() -> dict[str, dict[int, float]]:
+    """Load measured per-unit perplexity deltas from the sensitivity CSV."""
     frame = pd.read_csv(SENS_PATH)
     return {
         str(unit): {int(row.bits): float(row.delta_ppl) for row in rows.itertuples()}
@@ -57,6 +59,7 @@ def load_costs() -> dict[str, dict[int, float]]:
 
 
 def greedy_allocation(units: list[Any], bits_options: list[int], costs: dict[str, dict[int, float]], budget: float) -> dict[str, int]:
+    """Downgrade the cheapest next bit step until the budget is satisfied."""
     descending = sorted(bits_options, reverse=True)
     allocation = {unit.name: descending[0] for unit in units}
     while average_bits(units, allocation) > budget:
@@ -69,6 +72,7 @@ def greedy_allocation(units: list[Any], bits_options: list[int], costs: dict[str
             lower = descending[index + 1]
             saved = current - lower
             cost_increase = costs[unit.name][lower] - costs[unit.name][current]
+            # Normalize measured cost by parameter-weighted bits saved.
             candidates.append((cost_increase / (unit.params * saved), unit.name, lower))
         if not candidates:
             raise ValueError(f"Budget {budget} is unreachable with configured bit options")
@@ -78,10 +82,12 @@ def greedy_allocation(units: list[Any], bits_options: list[int], costs: dict[str
 
 
 def random_allocation(units: list[Any], bits_options: list[int], budget: float, seed: int) -> dict[str, int]:
+    """Create a reproducible random sequence of one-step downgrades."""
     descending = sorted(bits_options, reverse=True)
     allocation = {unit.name: descending[0] for unit in units}
     rng = random.Random(seed)
     while average_bits(units, allocation) > budget:
+        # Randomness chooses the next legal downgrade; each step remains adjacent.
         choices = [
             unit
             for unit in units
@@ -95,10 +101,12 @@ def random_allocation(units: list[Any], bits_options: list[int], budget: float, 
 
 
 def uniform_allocation(units: list[Any], bits_options: list[int], bits: int) -> dict[str, int]:
+    """Assign one bit width to every unit."""
     return {unit.name: bits for unit in units}
 
 
 def save_allocation(budget: float, method: str, allocation: dict[str, int]) -> None:
+    """Persist an allocation as JSON under the allocation results directory."""
     ALLOCATION_DIR.mkdir(parents=True, exist_ok=True)
     path = ALLOCATION_DIR / f"allocation_{method}_{budget:g}.json"
     path.write_text(json.dumps(allocation, indent=2, sort_keys=True) + "\n")
@@ -113,17 +121,20 @@ def evaluate_allocation(
     config: dict[str, Any],
     predicted: float | None,
 ) -> dict[str, Any]:
+    """Measure both PPL splits for an allocation and restore all original weights."""
     saved = {
         target.name: target.module.weight.data.clone()
         for unit in units
         for target in unit.targets
     }
     try:
+        # Apply the complete allocation before either perplexity measurement.
         for unit in units:
             quantize_unit(unit, allocation[unit.name])
         ppl_sens = perplexity(model, train_windows, config)
         ppl_test = perplexity(model, test_windows, config)
     finally:
+        # Never leave quantized weights in the model for the next method or budget.
         for unit in units:
             restore_unit(unit, {target.name: saved[target.name] for target in unit.targets})
     return {
@@ -135,6 +146,7 @@ def evaluate_allocation(
 
 
 def main() -> None:
+    """Run greedy, uniform, and random allocation evaluations for every budget."""
     setup_logging()
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     config = load_config()
@@ -142,6 +154,7 @@ def main() -> None:
     targets = find_targets(model)
     units = make_units(targets, config["unit"])
     train_windows, test_windows = load_windows(tokenizer, config)
+    # Costs and evaluation data must use the same active smoke/full configuration.
     baseline_sens = perplexity(model, train_windows, config)
     baseline_test = perplexity(model, test_windows, config)
     costs = load_costs()
@@ -159,6 +172,7 @@ def main() -> None:
     LOGGER.info("scales_in_avg_bits: false")
     LOGGER.info(f"baseline: sens={baseline_sens:.6f} test={baseline_test:.6f}")
     for budget in config["budgets"]:
+        # Each evaluator restores weights, so every strategy starts unquantized.
         greedy = greedy_allocation(units, bits_options, costs, budget)
         greedy_predicted = baseline_sens + sum(costs[unit.name][greedy[unit.name]] for unit in units)
         result = evaluate_allocation(model, units, greedy, train_windows, test_windows, config, greedy_predicted)
@@ -182,6 +196,7 @@ def main() -> None:
 
         random_results = []
         for seed in config["random_seeds"]:
+            # Keep seeds as separate rows so random variability remains auditable.
             allocation = random_allocation(units, bits_options, budget, seed)
             random_result = evaluate_allocation(model, units, allocation, train_windows, test_windows, config, None)
             random_results.append(random_result)
@@ -193,6 +208,7 @@ def main() -> None:
             f"sens={mean(sens_values):.6f}/{stdev(sens_values) if len(sens_values) > 1 else 0.0:.6f} "
             f"test={mean(test_values):.6f}/{stdev(test_values) if len(test_values) > 1 else 0.0:.6f}"
         )
+    # Write after all methods finish so the table is internally consistent.
     pd.DataFrame(rows, columns=RESULT_FIELDS).to_csv(RESULTS_PATH, index=False)
     LOGGER.info("\n" + pd.DataFrame(rows, columns=RESULT_FIELDS).to_string(index=False))
 

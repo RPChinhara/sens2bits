@@ -35,6 +35,7 @@ LOGGER = logging.getLogger("sens2bits")
 
 
 def setup_logging() -> None:
+    """Configure console and append-only file logging for both workflows."""
     LOGGER.setLevel(logging.INFO)
     LOGGER.handlers.clear()
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
@@ -49,6 +50,7 @@ def setup_logging() -> None:
 
 @dataclass
 class Target:
+    """A decoder linear module selected for quantization experiments."""
     name: str
     layer: int
     part: str
@@ -57,6 +59,7 @@ class Target:
 
 @dataclass
 class Unit:
+    """One allocation unit, containing one or more target linear modules."""
     name: str
     layer: int
     part: str
@@ -64,10 +67,12 @@ class Unit:
 
     @property
     def params(self) -> int:
+        """Return the number of weight parameters represented by this unit."""
         return sum(target.module.weight.numel() for target in self.targets)
 
 
 def load_config() -> dict[str, Any]:
+    """Load YAML settings and apply smoke-mode overrides when enabled."""
     with CONFIG_PATH.open() as stream:
         config = yaml.safe_load(stream)
     if config["smoke"]:
@@ -79,6 +84,7 @@ def load_config() -> dict[str, Any]:
 
 
 def resolve_dtype(dtype_name: str) -> torch.dtype:
+    """Convert a configured dtype name to its PyTorch dtype."""
     dtypes = {"float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16}
     try:
         return dtypes[dtype_name]
@@ -87,9 +93,12 @@ def resolve_dtype(dtype_name: str) -> torch.dtype:
 
 
 def load_model_and_tokenizer(config: dict[str, Any]) -> tuple[nn.Module, Any]:
+    """Load the configured causal model, tokenizer, and place the model on-device."""
     dtype = resolve_dtype(config["dtype"])
     kwargs = {"dtype": dtype}
     try:
+        # Qwen3.5 normally exposes a causal LM class; retain the multimodal
+        # fallback for model revisions whose auto-mapping requires it.
         model = AutoModelForCausalLM.from_pretrained(config["model_id"], **kwargs)
     except Exception as causal_error:
         LOGGER.warning(f"AutoModelForCausalLM failed; trying AutoModelForMultimodalLM: {causal_error}")
@@ -108,6 +117,7 @@ def load_model_and_tokenizer(config: dict[str, Any]) -> tuple[nn.Module, Any]:
 
 
 def find_targets(model: nn.Module) -> list[Target]:
+    """Find decoder linear weights while excluding visual paths and non-target modules."""
     targets = []
     pattern = re.compile(r"\.layers\.(\d+)\.")
     for name, module in model.named_modules():
@@ -125,6 +135,7 @@ def find_targets(model: nn.Module) -> list[Target]:
 
 
 def print_target_summary(model: nn.Module, targets: list[Target]) -> None:
+    """Log layer types, representative modules, and target parameter statistics."""
     layer_numbers = sorted({target.layer for target in targets})
     by_layer = defaultdict(list)
     for target in targets:
@@ -134,6 +145,7 @@ def print_target_summary(model: nn.Module, targets: list[Target]) -> None:
     for name, module in model.named_modules():
         match = layer_pattern.search(name)
         if match:
+            # Child names are more stable across Qwen revisions than class names.
             child_names = {child_name for child_name, _ in module.named_children()}
             if "self_attn" in child_names:
                 layer_types[int(match.group(1))] = "attention"
@@ -159,6 +171,7 @@ def print_target_summary(model: nn.Module, targets: list[Target]) -> None:
 
 
 def make_units(targets: list[Target], unit_kind: str) -> list[Unit]:
+    """Group targets by layer/part or keep each matrix as its own unit."""
     grouped: dict[tuple[int, str], list[Target]] = defaultdict(list)
     for target in targets:
         key = (target.layer, target.part) if unit_kind == "part" else (target.layer, target.name)
@@ -172,12 +185,14 @@ def make_units(targets: list[Target], unit_kind: str) -> list[Unit]:
 
 
 def token_windows(tokenizer: Any, split: Any, max_len: int) -> list[torch.Tensor]:
+    """Join a dataset split, tokenize it once, and create non-overlapping windows."""
     text = "\n\n".join(item["text"] for item in split)
     encoded = tokenizer(text, add_special_tokens=False, return_tensors="pt")["input_ids"][0]
     return [encoded[start : start + max_len] for start in range(0, encoded.numel() - max_len + 1, max_len)]
 
 
 def load_windows(tokenizer: Any, config: dict[str, Any]) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+    """Load Wikitext-2 and return configured train-sensitivity and test windows."""
     dataset = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1")
     train = token_windows(tokenizer, dataset["train"], config["max_len"])[: config["sens_windows"]]
     test = token_windows(tokenizer, dataset["test"], config["max_len"])
@@ -189,17 +204,20 @@ def load_windows(tokenizer: Any, config: dict[str, Any]) -> tuple[list[torch.Ten
 
 
 def perplexity(model: nn.Module, windows: list[torch.Tensor], config: dict[str, Any]) -> float:
+    """Measure perplexity over all tokens in the supplied evaluation windows."""
     total_nll = 0.0
     total_tokens = 0
     started = time.perf_counter()
     with torch.no_grad():
         for start in range(0, len(windows), config["batch_size"]):
+            # Padding lets the final partial batch use the same forward path.
             batch = torch.nn.utils.rnn.pad_sequence(
                 windows[start : start + config["batch_size"]], batch_first=True, padding_value=0
             ).to(config["device"])
             attention_mask = torch.ones_like(batch)
             logits = model(input_ids=batch, attention_mask=attention_mask).logits[:, :-1].float()
             labels = batch[:, 1:]
+            # Shift logits and labels for causal next-token prediction.
             loss = torch.nn.functional.cross_entropy(logits.reshape(-1, logits.shape[-1]), labels.reshape(-1), reduction="sum")
             total_nll += float(loss)
             total_tokens += labels.numel()
@@ -210,10 +228,12 @@ def perplexity(model: nn.Module, windows: list[torch.Tensor], config: dict[str, 
 
 
 def fake_quantize_weight(weight: torch.Tensor, bits: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply symmetric per-output-channel fake quantization to a matrix weight."""
     if weight.ndim != 2:
         raise ValueError(f"Expected a matrix weight, got shape {tuple(weight.shape)}")
     qmax = 2 ** (bits - 1) - 1
     float_weight = weight.float()
+    # Scales are per output row because Linear weights are shaped (out, in).
     scale = float_weight.abs().amax(dim=1) / qmax
     scale = torch.where(scale == 0, torch.ones_like(scale), scale)
     quantized = torch.clamp(torch.round(float_weight / scale[:, None]), -qmax, qmax) * scale[:, None]
@@ -221,11 +241,13 @@ def fake_quantize_weight(weight: torch.Tensor, bits: int) -> tuple[torch.Tensor,
 
 
 def quantize_unit(unit: Unit, bits: int) -> None:
+    """Replace every matrix in a unit with its fake-quantized weights."""
     for target in unit.targets:
         target.module.weight.data.copy_(fake_quantize_weight(target.module.weight.data, bits)[0])
 
 
 def restore_unit(unit: Unit, saved: dict[str, torch.Tensor]) -> None:
+    """Restore a unit and assert that every original tensor is recovered exactly."""
     for target in unit.targets:
         target.module.weight.data.copy_(saved[target.name])
         if not torch.equal(target.module.weight.data, saved[target.name]):
@@ -233,11 +255,13 @@ def restore_unit(unit: Unit, saved: dict[str, torch.Tensor]) -> None:
 
 
 def quantizer_check(target: Target, bits: int) -> None:
+    """Validate scale shape, codebook size, error bound, and idempotence."""
     original = target.module.weight.data.clone()
     quantized, scales = fake_quantize_weight(original, bits)
     qmax = 2 ** (bits - 1) - 1
     if scales.numel() != target.module.out_features:
         raise AssertionError("scale length does not match output channels")
+    # Exercise the quantizer on an actual model matrix, not a toy tensor.
     for row in quantized.float():
         if torch.unique(row).numel() > 2**bits - 1:
             raise AssertionError("quantized row has too many unique values")
@@ -251,6 +275,7 @@ def quantizer_check(target: Target, bits: int) -> None:
 
 
 def read_completed() -> set[tuple[str, int]]:
+    """Read completed unit/bit rows so an interrupted grid can resume safely."""
     if not SENS_PATH.exists():
         return set()
     frame = pd.read_csv(SENS_PATH)
@@ -258,6 +283,7 @@ def read_completed() -> set[tuple[str, int]]:
 
 
 def append_sensitivity(row: dict[str, Any]) -> None:
+    """Append one completed sensitivity measurement to the results CSV."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     new_file = not SENS_PATH.exists()
     with SENS_PATH.open("a", newline="") as stream:
@@ -268,8 +294,10 @@ def append_sensitivity(row: dict[str, Any]) -> None:
 
 
 def save_heatmap(units: list[Unit], bits_options: list[int]) -> int:
+    """Save the sensitivity heatmap and count units with non-monotone deltas."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     frame = pd.read_csv(SENS_PATH)
+    # Rows are ordered by layer and part; columns follow the configured bit grid.
     pivot = frame.pivot_table(index=["layer", "part"], columns="bits", values="delta_ppl", aggfunc="first")
     pivot = pivot.reindex(columns=bits_options)
     plt.figure(figsize=(max(6, len(bits_options) * 1.5), max(6, len(pivot) * 0.25)))
@@ -294,15 +322,19 @@ def save_heatmap(units: list[Unit], bits_options: list[int]) -> int:
 
 
 def run_sensitivity(model: nn.Module, units: list[Unit], windows: list[torch.Tensor], config: dict[str, Any], baseline: float) -> None:
+    """Run the resumable sensitivity grid while restoring weights after each swap."""
     completed = read_completed()
+    # Count only missing rows so the first timing estimate reflects remaining work.
     total_evaluations = sum((unit.name, bits) not in completed for unit in units for bits in config["bits_options"])
     completed_evaluations = 0
     seconds_per_evaluation = None
     for unit in units:
+        # Every bit setting for this unit starts from the same saved baseline.
         saved = {target.name: target.module.weight.data.clone() for target in unit.targets}
         try:
             for bits in config["bits_options"]:
                 if (unit.name, bits) in completed:
+                    # Existing rows may come from a prior interrupted run.
                     continue
                 quantize_unit(unit, bits)
                 started = time.perf_counter()
@@ -312,6 +344,7 @@ def run_sensitivity(model: nn.Module, units: list[Unit], windows: list[torch.Ten
                 if completed_evaluations == 1:
                     remaining = total_evaluations - completed_evaluations
                     LOGGER.info(f"projected_grid_seconds: {remaining * seconds_per_evaluation:.3f}")
+                # Persist each row immediately so an interruption loses little work.
                 append_sensitivity(
                     {
                         "unit": unit.name,
@@ -325,6 +358,7 @@ def run_sensitivity(model: nn.Module, units: list[Unit], windows: list[torch.Ten
                 )
                 restore_unit(unit, saved)
         finally:
+            # Also restore after exceptions during evaluation or CSV writing.
             restore_unit(unit, saved)
         LOGGER.info(f"unit_restored: {unit.name} true")
     remeasured = perplexity(model, windows, config)
@@ -334,12 +368,14 @@ def run_sensitivity(model: nn.Module, units: list[Unit], windows: list[torch.Ten
 
 
 def main() -> None:
+    """Run model inspection, baselines, quantizer checks, and sensitivity analysis."""
     setup_logging()
     config = load_config()
     model, tokenizer = load_model_and_tokenizer(config)
     targets = find_targets(model)
     if not targets:
         raise RuntimeError("No target linear modules found")
+    # All later measurements depend on this discovered target set and baseline.
     print_target_summary(model, targets)
     units = make_units(targets, config["unit"])
     train_windows, test_windows = load_windows(tokenizer, config)
