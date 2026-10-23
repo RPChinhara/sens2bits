@@ -295,6 +295,7 @@ def append_sensitivity(row: dict[str, Any]) -> None:
 
 def save_heatmap(units: list[Unit], bits_options: list[int]) -> int:
     """Save the sensitivity heatmap and count units with non-monotone deltas."""
+    LOGGER.info(f"Saving heatmap: {HEATMAP_PATH}")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     frame = pd.read_csv(SENS_PATH)
     # Rows are ordered by layer and part; columns follow the configured bit grid.
