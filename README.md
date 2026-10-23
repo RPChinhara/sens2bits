@@ -9,6 +9,13 @@ uniform, and random allocations.
 
 ```bash
 uv sync
+uv run python main.py
+```
+
+The central command runs sensitivity measurement first and then allocation.
+The individual stages can also be run separately:
+
+```bash
 uv run python src/sens2bits/sens.py
 uv run python src/sens2bits/alloc.py
 ```

@@ -8,18 +8,32 @@ from typing import Any
 
 import pandas as pd
 
-from sens import (
-    LOGGER,
-    load_config,
-    load_model_and_tokenizer,
-    load_windows,
-    make_units,
-    find_targets,
-    perplexity,
-    quantize_unit,
-    restore_unit,
-    setup_logging,
-)
+if __package__:
+    from .sens import (
+        LOGGER,
+        load_config,
+        load_model_and_tokenizer,
+        load_windows,
+        make_units,
+        find_targets,
+        perplexity,
+        quantize_unit,
+        restore_unit,
+        setup_logging,
+    )
+else:
+    from sens import (
+        LOGGER,
+        load_config,
+        load_model_and_tokenizer,
+        load_windows,
+        make_units,
+        find_targets,
+        perplexity,
+        quantize_unit,
+        restore_unit,
+        setup_logging,
+    )
 
 
 RESULTS_DIR = Path(__file__).resolve().parents[2] / "results"
