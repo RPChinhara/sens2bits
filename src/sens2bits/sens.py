@@ -335,8 +335,10 @@ def run_sensitivity(model: nn.Module, units: list[Unit], windows: list[torch.Ten
             for bits in config["bits_options"]:
                 if (unit.name, bits) in completed:
                     # Existing rows may come from a prior interrupted run.
+                    LOGGER.info(f"skipping_completed: {unit.name} bits={bits}")
                     continue
                 quantize_unit(unit, bits)
+                LOGGER.info(f"quantized: {unit.name} bits={bits}")
                 started = time.perf_counter()
                 ppl = perplexity(model, windows, config)
                 seconds_per_evaluation = time.perf_counter() - started

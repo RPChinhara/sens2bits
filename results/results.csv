@@ -1,6 +1,0 @@
-budget,method,avg_bits,ppl_sens,ppl_test,pred_ppl_sens
-baseline,unquantized,8.0,1.0,1.0,
-4,greedy,4.0,1.0,1.0,1.0
-4,uniform_below,4.0,1.0,1.0,1.0
-4,uniform_above,4.0,1.0,1.0,1.0
-4,random_seed_0,4.0,1.0,1.0,1.0
