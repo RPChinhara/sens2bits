@@ -8,32 +8,18 @@ from typing import Any
 
 import pandas as pd
 
-if __package__:
-    from .sens import (
-        LOGGER,
-        load_config,
-        load_model_and_tokenizer,
-        load_windows,
-        make_units,
-        find_targets,
-        perplexity,
-        quantize_unit,
-        restore_unit,
-        setup_logging,
-    )
-else:
-    from sens import (
-        LOGGER,
-        load_config,
-        load_model_and_tokenizer,
-        load_windows,
-        make_units,
-        find_targets,
-        perplexity,
-        quantize_unit,
-        restore_unit,
-        setup_logging,
-    )
+from .sens import (
+    LOGGER,
+    find_targets,
+    load_config,
+    load_model_and_tokenizer,
+    load_windows,
+    make_units,
+    perplexity,
+    quantize_unit,
+    restore_unit,
+    setup_logging,
+)
 
 
 RESULTS_DIR = Path(__file__).resolve().parents[2] / "results"
@@ -143,6 +129,16 @@ def uniform_allocation(units: list[Any], bits_options: list[int], bits: int) -> 
     return {unit.name: bits for unit in units}
 
 
+def predicted_ppl(
+    baseline_sens: float,
+    units: list[Any],
+    costs: dict[str, dict[int, float]],
+    allocation: dict[str, int],
+) -> float:
+    """Predict PPL using additive per-unit sensitivity deltas."""
+    return baseline_sens + sum(costs[unit.name][allocation[unit.name]] for unit in units)
+
+
 def save_allocation(budget: float, method: str, allocation: dict[str, int]) -> None:
     """Persist an allocation as JSON under the allocation results directory."""
     ALLOCATION_DIR.mkdir(parents=True, exist_ok=True)
@@ -216,63 +212,77 @@ def main() -> None:
         baseline_row = checkpoint_row(checkpoint, "baseline", "unquantized")
         baseline_sens = float(baseline_row["ppl_sens"])
         baseline_test = float(baseline_row["ppl_test"])
+
+    def evaluate_checkpoint(
+        budget: float, method: str, allocation: dict[str, int], predicted: float
+    ) -> dict[str, Any]:
+        nonlocal checkpoint
+        key = (budget_key(budget), method)
+        if key in completed:
+            result = checkpoint_row(checkpoint, budget, method)
+            if pd.isna(result["pred_ppl_sens"]):
+                mask = checkpoint["budget"].map(budget_key).eq(budget_key(budget)) & checkpoint["method"].eq(method)
+                checkpoint.loc[mask, "pred_ppl_sens"] = predicted
+                checkpoint[RESULT_FIELDS].to_csv(RESULTS_PATH, index=False)
+                result["pred_ppl_sens"] = predicted
+            LOGGER.info(f"resume: skipping budget={budget:g} method={method}")
+            return result
+        result = evaluate_allocation(model, units, allocation, train_windows, test_windows, config, predicted)
+        if method == "greedy" and result["avg_bits"] > budget:
+            raise AssertionError(f"greedy allocation exceeds budget {budget}")
+        row = {"budget": budget, "method": method, **result}
+        append_checkpoint(row)
+        checkpoint = pd.concat([checkpoint, pd.DataFrame([row])], ignore_index=True)
+        completed.add(key)
+        return result
+
     LOGGER.info("scales_in_avg_bits: false")
     LOGGER.info(f"baseline: sens={baseline_sens:.6f} test={baseline_test:.6f}")
     for budget in config["budgets"]:
         # Each evaluator restores weights, so every strategy starts unquantized.
-        current_budget = budget_key(budget)
         greedy = greedy_allocation(units, bits_options, costs, budget)
-        greedy_predicted = baseline_sens + sum(costs[unit.name][greedy[unit.name]] for unit in units)
-        if (current_budget, "greedy") in completed:
-            result = checkpoint_row(checkpoint, budget, "greedy")
-            LOGGER.info(f"resume: skipping budget={budget:g} method=greedy")
-        else:
-            result = evaluate_allocation(model, units, greedy, train_windows, test_windows, config, greedy_predicted)
-            if result["avg_bits"] > budget:
-                raise AssertionError(f"greedy allocation exceeds budget {budget}")
-            append_checkpoint({"budget": budget, "method": "greedy", **result})
-            checkpoint = pd.concat([checkpoint, pd.DataFrame([{"budget": budget, "method": "greedy", **result}])], ignore_index=True)
-            completed.add((current_budget, "greedy"))
+        result = evaluate_checkpoint(budget, "greedy", greedy, predicted_ppl(baseline_sens, units, costs, greedy))
         save_allocation(budget, "greedy", greedy)
         LOGGER.info(f"budget={budget:g} method=greedy avg_bits={result['avg_bits']:.6f}")
 
         below = max(bit for bit in bits_options if bit <= budget)
-        if (current_budget, "uniform_below") in completed:
-            below_result = checkpoint_row(checkpoint, budget, "uniform_below")
-            LOGGER.info(f"resume: skipping budget={budget:g} method=uniform_below")
-        else:
-            below_result = evaluate_allocation(
-                model, units, uniform_allocation(units, bits_options, below), train_windows, test_windows, config, None
-            )
-            append_checkpoint({"budget": budget, "method": "uniform_below", **below_result})
-            checkpoint = pd.concat([checkpoint, pd.DataFrame([{"budget": budget, "method": "uniform_below", **below_result}])], ignore_index=True)
-            completed.add((current_budget, "uniform_below"))
+        below_allocation = uniform_allocation(units, bits_options, below)
+        below_result = evaluate_checkpoint(
+            budget, "uniform_below", below_allocation,
+            predicted_ppl(baseline_sens, units, costs, below_allocation),
+        )
 
         above = min(bit for bit in bits_options if bit >= budget)
-        if (current_budget, "uniform_above") in completed:
-            above_result = checkpoint_row(checkpoint, budget, "uniform_above")
-            LOGGER.info(f"resume: skipping budget={budget:g} method=uniform_above")
+        above_allocation = uniform_allocation(units, bits_options, above)
+        if below == above:
+            LOGGER.info(f"budget={budget:g} method=uniform_above reused uniform_below result")
+            if (budget_key(budget), "uniform_above") in completed:
+                above_result = evaluate_checkpoint(
+                    budget, "uniform_above", above_allocation,
+                    predicted_ppl(baseline_sens, units, costs, above_allocation),
+                )
+            else:
+                above_result = below_result
         else:
-            above_result = evaluate_allocation(
-                model, units, uniform_allocation(units, bits_options, above), train_windows, test_windows, config, None
+            above_result = evaluate_checkpoint(
+                budget, "uniform_above", above_allocation,
+                predicted_ppl(baseline_sens, units, costs, above_allocation),
             )
-            append_checkpoint({"budget": budget, "method": "uniform_above", **above_result})
-            checkpoint = pd.concat([checkpoint, pd.DataFrame([{"budget": budget, "method": "uniform_above", **above_result}])], ignore_index=True)
-            completed.add((current_budget, "uniform_above"))
+        if below == above and (budget_key(budget), "uniform_above") not in completed:
+            row = {"budget": budget, "method": "uniform_above", **above_result}
+            append_checkpoint(row)
+            checkpoint = pd.concat([checkpoint, pd.DataFrame([row])], ignore_index=True)
+            completed.add((budget_key(budget), "uniform_above"))
 
         random_results = []
         for seed in config["random_seeds"]:
             # Keep seeds as separate rows so random variability remains auditable.
             method = f"random_seed_{seed}"
             allocation = random_allocation(units, bits_options, budget, seed)
-            if (current_budget, method) in completed:
-                random_result = checkpoint_row(checkpoint, budget, method)
-                LOGGER.info(f"resume: skipping budget={budget:g} method={method}")
-            else:
-                random_result = evaluate_allocation(model, units, allocation, train_windows, test_windows, config, None)
-                append_checkpoint({"budget": budget, "method": method, **random_result})
-                checkpoint = pd.concat([checkpoint, pd.DataFrame([{"budget": budget, "method": method, **random_result}])], ignore_index=True)
-                completed.add((current_budget, method))
+            random_result = evaluate_checkpoint(
+                budget, method, allocation,
+                predicted_ppl(baseline_sens, units, costs, allocation),
+            )
             random_results.append(random_result)
         sens_values = [result["ppl_sens"] for result in random_results]
         test_values = [result["ppl_test"] for result in random_results]

@@ -3,22 +3,13 @@ from __future__ import annotations
 import json
 import random
 import types
-from pathlib import Path
 
 import pandas as pd
+import pytest
 import torch
 import torch.nn as nn
 
 from sens2bits import alloc
-
-
-def make_unit(name="u1", params=4):
-    module = nn.Linear(2, 2)
-    with torch.no_grad():
-        module.weight.copy_(torch.tensor([[1.0, 2.0], [3.0, 4.0]]))
-    target = types.SimpleNamespace(name=name + "_t", module=module)
-    # alloc.Unit import? alloc uses duck typed; sens Unit also works
-    return None
 
 
 from sens2bits import sens
@@ -66,22 +57,14 @@ def test_load_checkpoint_missing_columns(tmp_path, monkeypatch):
     path = tmp_path / "results.csv"
     pd.DataFrame([{"budget": 4, "method": "greedy"}]).to_csv(path, index=False)
     monkeypatch.setattr(alloc, "RESULTS_PATH", path)
-    try:
+    with pytest.raises(ValueError, match="missing columns"):
         alloc.load_checkpoint()
-    except ValueError as exc:
-        assert "missing columns" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
 
 
 def test_checkpoint_row_missing():
     frame = pd.DataFrame([{"budget": 4, "method": "greedy"}])
-    try:
+    with pytest.raises(KeyError, match="Missing checkpoint row"):
         alloc.checkpoint_row(frame, 8, "greedy")
-    except KeyError as exc:
-        assert "Missing checkpoint row" in str(exc)
-    else:
-        raise AssertionError("expected KeyError")
 
 
 def test_greedy_allocation_basic():
@@ -102,12 +85,8 @@ def test_greedy_allocation_unreachable():
     units = [u1]
     bits_options = [8, 4]
     costs = {"u1": {8: 0.0, 4: 0.2}}
-    try:
+    with pytest.raises(ValueError, match="unreachable"):
         alloc.greedy_allocation(units, bits_options, costs, 2.0)
-    except ValueError as e:
-        assert "unreachable" in str(e)
-    else:
-        raise AssertionError("expected ValueError")
 
 
 def test_random_allocation_basic():
@@ -124,12 +103,8 @@ def test_random_allocation_unreachable():
     u1 = real_unit("u1")
     units = [u1]
     bits_options = [8, 4]
-    try:
+    with pytest.raises(ValueError):
         alloc.random_allocation(units, bits_options, 2.0, 0)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("expected ValueError")
 
 
 def test_uniform_allocation():
@@ -138,6 +113,19 @@ def test_uniform_allocation():
     units = [u1, u2]
     out = alloc.uniform_allocation(units, [8, 4], 4)
     assert out == {u1.name: 4, u2.name: 4}
+
+
+def test_predicted_ppl():
+    units = [real_unit("u1"), real_unit("u2")]
+    costs = {"u1": {8: 0.1, 4: 0.2}, "u2": {8: 0.3, 4: 0.4}}
+    for allocation in (
+        alloc.greedy_allocation(units, [8, 4], costs, 4.0),
+        alloc.uniform_allocation(units, [8, 4], 4),
+        alloc.random_allocation(units, [8, 4], 4.0, 0),
+    ):
+        assert alloc.predicted_ppl(1.0, units, costs, allocation) == pytest.approx(
+            1.0 + sum(costs[unit.name][allocation[unit.name]] for unit in units)
+        )
 
 
 def test_save_allocation(tmp_path, monkeypatch):
@@ -183,12 +171,8 @@ def test_evaluate_allocation_restore_on_exception(tmp_path, monkeypatch):
 
     monkeypatch.setattr(alloc, "perplexity", fake_perplexity)
     monkeypatch.setattr(alloc, "quantize_unit", lambda unit, bits: None)
-    try:
+    with pytest.raises(RuntimeError, match="boom"):
         alloc.evaluate_allocation(model, units, {"u1": 4}, [torch.arange(4)], [torch.arange(4)], {"batch_size": 1, "device": "cpu"}, None)
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("expected RuntimeError")
     assert torch.equal(u.targets[0].module.weight.data, original)
 
 
@@ -236,18 +220,21 @@ def test_alloc_main(tmp_path, monkeypatch):
     monkeypatch.setattr(alloc, "perplexity", lambda m, w, c: 1.0)
     # greedy_allocation etc run actual; costs okay; average bits works
     monkeypatch.setattr(alloc, "save_allocation", lambda *a, **k: None)
-    monkeypatch.setattr(alloc, "evaluate_allocation", lambda *a, **k: {
-        "avg_bits": 4.0,
-        "ppl_sens": 1.0,
-        "ppl_test": 1.0,
-        "pred_ppl_sens": 1.0,
-    })
+    calls = []
+
+    def evaluate(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"avg_bits": 4.0, "ppl_sens": 1.0, "ppl_test": 1.0, "pred_ppl_sens": 1.0}
+
+    monkeypatch.setattr(alloc, "evaluate_allocation", evaluate)
     monkeypatch.setattr(alloc, "LOGGER", __import__("logging").getLogger("x"))
     alloc.main()
+    assert (tmp_path / "results.csv").exists()
+    rows = pd.read_csv(tmp_path / "results.csv")
+    assert set(rows["method"]) == {"unquantized", "greedy", "uniform_below", "uniform_above", "random_seed_0"}
+    assert len(calls) == 3
     alloc.main()
-    repository_results = Path(__file__).resolve().parents[1] / "results" / "results.csv"
-    assert not repository_results.exists()
-    assert True
+    assert len(calls) == 3
 
 
 def test_alloc_main_assertion(tmp_path, monkeypatch):
@@ -296,9 +283,5 @@ def test_alloc_main_assertion(tmp_path, monkeypatch):
         "pred_ppl_sens": 1.0,
     })
     monkeypatch.setattr(alloc, "LOGGER", __import__("logging").getLogger("x"))
-    try:
+    with pytest.raises(AssertionError, match="exceeds budget"):
         alloc.main()
-    except AssertionError as e:
-        assert "exceeds budget" in str(e)
-    else:
-        raise AssertionError("expected AssertionError")

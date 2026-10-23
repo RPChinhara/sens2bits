@@ -16,8 +16,8 @@ The central command runs sensitivity measurement first and then allocation.
 The individual stages can also be run separately:
 
 ```bash
-uv run python src/sens2bits/sens.py
-uv run python src/sens2bits/alloc.py
+uv run python -m sens2bits.sens
+uv run python -m sens2bits.alloc
 ```
 
 All hyperparameters are in `config.yaml`.
@@ -50,7 +50,11 @@ uv run python main.py
 ```
 
 ## Measured results
-Average bits exclude per-channel quantization scales.
+Average bits cover decoder linear weights only; embeddings, `lm_head`, and
+normalization layers are unquantized. Quantization is symmetric absmax
+round-to-nearest, and 2-bit quantization uses 3 levels.
+`uniform_above` can exceed the requested budget. `pred_ppl_sens` assumes
+additive per-unit ΔPPL.
 Generated files are organized as follows:
 
 - `results/sens.csv`
