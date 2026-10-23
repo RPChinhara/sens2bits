@@ -22,6 +22,26 @@ uv run python src/sens2bits/alloc.py
 
 All hyperparameters are in `config.yaml`.
 
+## Testing and coverage
+
+Install the project and its development dependencies with:
+
+```bash
+uv sync
+```
+
+Run the complete test suite:
+
+```bash
+uv run pytest
+```
+
+Check the coverage report:
+
+```bash
+uv run coverage report
+```
+
 ### Start a fresh run:
 
 ```bash

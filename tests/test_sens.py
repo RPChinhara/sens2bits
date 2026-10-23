@@ -86,6 +86,32 @@ def test_setup_logging(tmp_path, monkeypatch):
     assert log_path.exists()
 
 
+def test_uncaught_exception_hook_keyboard_interrupt(tmp_path, monkeypatch):
+    monkeypatch.setattr(sens, "LOG_PATH", tmp_path / "test.log")
+    sens.setup_logging()
+    original = sens.sys.__excepthook__
+    calls = []
+    monkeypatch.setattr(sens.sys, "__excepthook__", lambda *args: calls.append(args))
+    hook = sens.sys.excepthook
+    hook(KeyboardInterrupt, KeyboardInterrupt(), None)
+    assert calls
+    assert calls[0][0] is KeyboardInterrupt
+    monkeypatch.setattr(sens.sys, "__excepthook__", original)
+
+
+def test_uncaught_exception_hook_logs_exception(tmp_path, monkeypatch):
+    monkeypatch.setattr(sens, "LOG_PATH", tmp_path / "test.log")
+    sens.setup_logging()
+    original = sens.sys.__excepthook__
+    calls = []
+    monkeypatch.setattr(sens.sys, "__excepthook__", lambda *args: calls.append(args))
+    hook = sens.sys.excepthook
+    hook(RuntimeError, RuntimeError("boom"), None)
+    assert calls
+    assert calls[0][0] is RuntimeError
+    monkeypatch.setattr(sens.sys, "__excepthook__", original)
+
+
 def test_resolve_dtype():
     assert sens.resolve_dtype("float16") is torch.float16
     assert sens.resolve_dtype("float32") is torch.float32

@@ -62,6 +62,28 @@ def test_load_costs(tmp_path, monkeypatch):
     assert costs["u2"][8] == 0.0
 
 
+def test_load_checkpoint_missing_columns(tmp_path, monkeypatch):
+    path = tmp_path / "results.csv"
+    pd.DataFrame([{"budget": 4, "method": "greedy"}]).to_csv(path, index=False)
+    monkeypatch.setattr(alloc, "RESULTS_PATH", path)
+    try:
+        alloc.load_checkpoint()
+    except ValueError as exc:
+        assert "missing columns" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_checkpoint_row_missing():
+    frame = pd.DataFrame([{"budget": 4, "method": "greedy"}])
+    try:
+        alloc.checkpoint_row(frame, 8, "greedy")
+    except KeyError as exc:
+        assert "Missing checkpoint row" in str(exc)
+    else:
+        raise AssertionError("expected KeyError")
+
+
 def test_greedy_allocation_basic():
     u1 = real_unit("u1")
     u2 = real_unit("u2")
@@ -173,6 +195,7 @@ def test_evaluate_allocation_restore_on_exception(tmp_path, monkeypatch):
 def test_alloc_main(tmp_path, monkeypatch):
     monkeypatch.setattr(alloc, "setup_logging", lambda: None)
     monkeypatch.setattr(alloc, "RESULTS_DIR", tmp_path / "results")
+    monkeypatch.setattr(alloc, "RESULTS_PATH", tmp_path / "results.csv")
     monkeypatch.setattr(alloc, "SENS_PATH", tmp_path / "sens.csv")
     monkeypatch.setattr(alloc, "ALLOCATION_DIR", tmp_path / "alloc")
     (tmp_path / "results").mkdir(parents=True, exist_ok=True)
@@ -221,12 +244,16 @@ def test_alloc_main(tmp_path, monkeypatch):
     })
     monkeypatch.setattr(alloc, "LOGGER", __import__("logging").getLogger("x"))
     alloc.main()
+    alloc.main()
+    repository_results = Path(__file__).resolve().parents[1] / "results" / "results.csv"
+    assert not repository_results.exists()
     assert True
 
 
 def test_alloc_main_assertion(tmp_path, monkeypatch):
     monkeypatch.setattr(alloc, "setup_logging", lambda: None)
     monkeypatch.setattr(alloc, "RESULTS_DIR", tmp_path / "results")
+    monkeypatch.setattr(alloc, "RESULTS_PATH", tmp_path / "results.csv")
     monkeypatch.setattr(alloc, "SENS_PATH", tmp_path / "sens.csv")
     monkeypatch.setattr(alloc, "ALLOCATION_DIR", tmp_path / "alloc")
     (tmp_path / "results").mkdir(parents=True, exist_ok=True)
