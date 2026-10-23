@@ -108,6 +108,7 @@ def load_model_and_tokenizer(config: dict[str, Any]) -> tuple[nn.Module, Any]:
             raise RuntimeError("Both causal and multimodal model loading failed") from multimodal_error
     model.to(config["device"])
     tokenizer = AutoTokenizer.from_pretrained(config["model_id"])
+    tokenizer.model_max_length = int(1e12)
     model.eval()
     LOGGER.info(f"model_class: {model.__class__.__name__}")
     LOGGER.info(f"transformers_version: {transformers_version}")
