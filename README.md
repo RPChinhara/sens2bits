@@ -20,9 +20,7 @@ uv run python src/sens2bits/sens.py
 uv run python src/sens2bits/alloc.py
 ```
 
-All hyperparameters are in `config.yaml`. The current checked-in configuration
-uses smoke mode: 2 sensitivity windows, 4 test windows, and 2 bit options.
-The model and dataset are loaded from the Hugging Face cache/network as needed.
+All hyperparameters are in `config.yaml`.
 
 ### Start a fresh run:
 
@@ -39,7 +37,3 @@ Generated files are organized as follows:
 - `results/heatmap.png`
 - `results/results.csv`
 - `results/allocation/allocation_greedy_<budget>.json`
-
-Run logs are appended to the project-root `quantization_study.log` file while also being
-shown in the terminal.
-
