@@ -1,0 +1,13 @@
+\begin{tabular}{rrrrrrrr}
+\toprule
+Budget $B$ & \multicolumn{2}{c}{Greedy} & \multicolumn{2}{c}{Uniform, $\lfloor B \rfloor$} & \multicolumn{2}{c}{Uniform, $\lceil B \rceil$} & Random median \\
+ & bits & PPL & bits & PPL & bits & PPL & PPL \\
+\midrule
+6 & 5.99 & 9.39 & 6 & 9.62 & \multicolumn{2}{c}{omitted} & 14.26 \\
+5 & 4.98 & 9.96 & 4 & 12.82 & 6 & 9.62 & 51.84 \\
+4.5 & 4.50 & 10.53 & 4 & 12.82 & 6 & 9.62 & 148.17 \\
+4 & 3.99 & 12.58 & 4 & 12.82 & \multicolumn{2}{c}{omitted} & 822.18 \\
+3.5 & 3.49 & 33.46 & 3 & 1,128 & 4 & 12.82 & 85,170 \\
+3 & 2.99 & 469.88 & 3 & 1,128 & \multicolumn{2}{c}{omitted} & 3.20 M \\
+\bottomrule
+\end{tabular}
