@@ -5,6 +5,8 @@ linear weights to symmetric per-output-channel fake quantization. It then
 allocates bits per layer/part under average-bit budgets and compares greedy,
 uniform, and random allocations.
 
+### Read the complete [report](report/report.pdf)
+
 ## Setup and usage
 
 ```bash
